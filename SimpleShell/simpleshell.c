@@ -89,8 +89,8 @@ Command *createHistoryCommand(int command_counter, char **args) {
   return new_command;
 }
 
-char **findCommandInHistory(char first_char_of_cmd, Command** prev_commands) {
-  int i = 9;
+char **findCommandInHistory(char first_char_of_cmd, Command** prev_commands, int command_counter) {
+  int i = command_counter;
   while (i >= 0) {
     if (prev_commands[i] == NULL) {
       i--;
@@ -104,26 +104,82 @@ char **findCommandInHistory(char first_char_of_cmd, Command** prev_commands) {
   return NULL;
 }
 
+char **findMostRecentCommand(Command** prev_commands, int command_counter) {
+  int i = command_counter;
+  while (i >= 0) {
+    if (prev_commands[i] == NULL) {
+      i--;
+      continue;
+    } else {
+      return prev_commands[i]->ptr_to_args;
+    }
+  }
+  return NULL;
+}
+
+void executeHistoryCommand(Command** prev_commands, int command_counter) {
+  int j = 0;
+  for (int i = 0; i <= command_counter - 1; i++) {
+    printf("%d ", prev_commands[i]->id);
+    while (prev_commands[i]->ptr_to_args[j] != NULL) {
+      printf("%s ", prev_commands[i]->ptr_to_args[j]);
+      j++;
+    }
+    printf("\n");
+    j = 0;
+  }
+
+}
+
 int main(void)
 {
+  int no_commands_exist = 0;
+  int no_commands_with_given_char_exist = 0;
   char inputBuffer[MAX_LINE]; /* buffer to hold the command entered */
   int background;             /* equals 1 if a command is followed by '&' */
   char *args[MAX_LINE/+1];    /* command line (of 80) has max of 40 arguments */
                               /* This is an array of pointers to chars */
+
   int command_counter = 0;
-  Command *prev_commands[10 * sizeof(Command)];
+  int command_list_size = 10;
+  Command **prev_commands = malloc(command_list_size * sizeof(Command));
   int j = 0;
+  int i = 0;
 
   while (1) {                 /* Program terminates normally inside setup */
     background = 0;
     printf(" COMMAND->\n");
     setup(inputBuffer, args, &background); /* get next command */
 
-    if (*args[0] == 'r') {
-      char **temp_arr = findCommandInHistory(*args[1], prev_commands);
+    char **temp_arr;
+    if (strcmp(args[0], "history") == 0) {
+      executeHistoryCommand(prev_commands, command_counter);
+      continue;
+    } else if (*args[0] == 'r') {
 
+      if (!args[1]) {
+        // user pressed r and did not pass any commands
+        temp_arr = findMostRecentCommand(prev_commands, command_counter);
+        no_commands_exist = 1;
+      } else {
+        // finding previous command that starts with the given character
+        temp_arr = findCommandInHistory(*args[1], prev_commands, command_counter);
+        no_commands_with_given_char_exist = 1;
+      }
+
+      // notify user if the command with the character doesn't exist
+      // or if 'r' was pressed with no char and no commands have been
+      // entered before
       if (temp_arr == NULL) {
-        printf("Previous command with that character doesn't exist! \n");
+        if (no_commands_exist) {
+          printf("No previous commands have been recorded! \n");  
+          no_commands_exist = 0;
+        } 
+
+        if (no_commands_with_given_char_exist) {
+          printf("Previous command with that character doesn't exist! \n");  
+          no_commands_with_given_char_exist = 0;
+        }
         continue;
       }
 
@@ -137,13 +193,19 @@ int main(void)
       }
       printf("\n");
 
-    } else {
-      
-      Command *latest_cmd = createHistoryCommand(command_counter, args);
-      prev_commands[command_counter % 10] = latest_cmd;
-      command_counter++;
-
     }
+      
+    Command *latest_cmd = createHistoryCommand(command_counter, args);
+    
+    if (command_counter + 1 > command_list_size) {
+      command_list_size *= 2;
+      realloc(prev_commands, command_list_size * sizeof(Command));
+    }
+    prev_commands[command_counter] = latest_cmd;
+
+    printf("%d\n", command_counter);
+    command_counter++;
+
     
     int status;
     pid_t childID, endID;
@@ -164,9 +226,5 @@ int main(void)
         endID = waitpid(childID, &status, WNOHANG|WUNTRACED);
       }
     }
-
-
-
-
   }
 }
