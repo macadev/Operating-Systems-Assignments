@@ -1,14 +1,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
 #include <string.h>
 #define MAX_LINE 80 /* 80 chars per line, per command, should be enough. */
+#define EXEC_FAILED -1
 
 
 typedef struct Command {
   int id;
   char *ptr_to_args[MAX_LINE/+1];
   char first_chr;
+  int is_command_valid;
 } Command;
 
 /**
@@ -70,10 +73,11 @@ void setup(char inputBuffer[], char *args[], int *background)
   args[ct] = NULL; /* just in case the input line was > 80 */
 }
 
-Command *createHistoryCommand(int command_counter, char **args) {
+Command *createHistoryCommand(int command_counter, char **args, int is_command_valid) {
   Command *new_command = malloc(sizeof(Command));
   new_command->id = command_counter;
   new_command->first_chr = *(args[0]);
+  new_command->is_command_valid = is_command_valid;
   
   int i = 0;
   while (args[i] != NULL) {
@@ -89,7 +93,7 @@ Command *createHistoryCommand(int command_counter, char **args) {
   return new_command;
 }
 
-char **findCommandInHistory(char first_char_of_cmd, Command** prev_commands, int command_counter) {
+Command *findCommandInHistory(char first_char_of_cmd, Command** prev_commands, int command_counter) {
   int i = command_counter;
   while (i >= 0) {
     if (prev_commands[i] == NULL) {
@@ -97,21 +101,21 @@ char **findCommandInHistory(char first_char_of_cmd, Command** prev_commands, int
       continue;
     }
     if (prev_commands[i]->first_chr == first_char_of_cmd) {
-      return prev_commands[i]->ptr_to_args;
+      return prev_commands[i];
     }
     i--;
   }
   return NULL;
 }
 
-char **findMostRecentCommand(Command** prev_commands, int command_counter) {
+Command *findMostRecentCommand(Command** prev_commands, int command_counter) {
   int i = command_counter;
   while (i >= 0) {
     if (prev_commands[i] == NULL) {
       i--;
       continue;
     } else {
-      return prev_commands[i]->ptr_to_args;
+      return prev_commands[i];
     }
   }
   return NULL;
@@ -128,7 +132,14 @@ void executeHistoryCommand(Command** prev_commands, int command_counter) {
     printf("\n");
     j = 0;
   }
+}
 
+char **isCommandValid(Command *cmd) {
+  if (cmd == NULL) {
+    return NULL;          
+  } else {
+    return cmd->ptr_to_args;
+  }
 }
 
 int main(void)
@@ -140,11 +151,11 @@ int main(void)
   char *args[MAX_LINE/+1];    /* command line (of 80) has max of 40 arguments */
                               /* This is an array of pointers to chars */
 
+  int j = 0;
   int command_counter = 0;
   int command_list_size = 10;
+  Command *temp_command;
   Command **prev_commands = malloc(command_list_size * sizeof(Command));
-  int j = 0;
-  int i = 0;
 
   while (1) {                 /* Program terminates normally inside setup */
     background = 0;
@@ -159,12 +170,20 @@ int main(void)
 
       if (!args[1]) {
         // user pressed r and did not pass any commands
-        temp_arr = findMostRecentCommand(prev_commands, command_counter);
+        temp_command = findMostRecentCommand(prev_commands, command_counter);
+        temp_arr = isCommandValid(temp_command);
         no_commands_exist = 1;
       } else {
         // finding previous command that starts with the given character
-        temp_arr = findCommandInHistory(*args[1], prev_commands, command_counter);
+        temp_command = findCommandInHistory(*args[1], prev_commands, command_counter);
+        temp_arr = isCommandValid(temp_command);
         no_commands_with_given_char_exist = 1;
+      }
+
+      //Check if the command is INVALID, if it is don't execute it.
+      if (temp_command != NULL && temp_command->is_command_valid == 1){
+        printf("The command you are trying to run is erroneous.\n");
+        continue;
       }
 
       // notify user if the command with the character doesn't exist
@@ -194,37 +213,56 @@ int main(void)
       printf("\n");
 
     }
-      
-    Command *latest_cmd = createHistoryCommand(command_counter, args);
-    
-    if (command_counter + 1 > command_list_size) {
-      command_list_size *= 2;
-      realloc(prev_commands, command_list_size * sizeof(Command));
-    }
-    prev_commands[command_counter] = latest_cmd;
-
-    printf("%d\n", command_counter);
-    command_counter++;
-
-    
-    int status;
-    pid_t childID, endID;
-    childID = fork();
 
     /* the steps are:
     (1) fork a child process using fork()
     (2) the child process will invoke execvp()
     (3) if background == 1, the parent will wait,
     otherwise returns to the setup() function. */
+    
+    int status;
+    int result_of_exec = 0;
+    pid_t childID, endID;
+    childID = fork();
+
     if (childID == 0) {
-      execvp(args[0], args);
-      exit(EXIT_SUCCESS);
+      
+      result_of_exec = execvp(args[0], args);
+      if (result_of_exec == -1) {
+        exit(EXIT_FAILURE);
+      } else {
+        exit(EXIT_SUCCESS);
+      }
+
     } else if (background != 1) {
-      endID = waitpid(childID, &status, WNOHANG|WUNTRACED);
+      endID = waitpid(childID, &status, WUNTRACED);
+
       while (endID != childID) {
-        //printf("waiting for child");
-        endID = waitpid(childID, &status, WNOHANG|WUNTRACED);
+        endID = waitpid(childID, &status, WUNTRACED);
+      }
+
+      if (endID == -1) exit(EXIT_FAILURE);
+
+      if (WIFEXITED(status)) {
+        if (WEXITSTATUS(status) == 1) {
+          result_of_exec = 1;
+        } 
       }
     }
+
+    Command *latest_cmd;
+    if (result_of_exec == 1) { //The command couldn't be executed successfully
+      latest_cmd = createHistoryCommand(command_counter, args, 1);
+    } else {  //Command executed successfully
+      latest_cmd = createHistoryCommand(command_counter, args, 0);
+    }
+    
+    if (command_counter + 1 > command_list_size) {
+      command_list_size *= 2;
+      realloc(prev_commands, command_list_size * sizeof(Command));
+    }
+    prev_commands[command_counter] = latest_cmd;
+    command_counter++;
+
   }
 }
