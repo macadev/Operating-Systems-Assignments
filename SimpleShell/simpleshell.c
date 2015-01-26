@@ -19,8 +19,7 @@ typedef struct Command {
 * using whitespace as delimiters. setup() sets the args parameter as a
 * null-terminated string.
 */
-void setup(char inputBuffer[], char *args[], int *background)
-{
+void setup(char inputBuffer[], char *args[], int *background) {
   int length, /* # of characters in the command line */
       i,      /* loop index for accessing inputBuffer array */
       start,  /* index where beginning of next command parameter is */
@@ -83,7 +82,7 @@ Command *createHistoryCommand(int command_counter, char **args, int is_command_v
   while (args[i] != NULL) {
     new_command->ptr_to_args[i] = malloc(strlen(args[i]));
     if (new_command->ptr_to_args[i] == NULL) {
-      printf("memory allocaiton failed! \n");
+      printf("memory allocation failed! \n");
       exit(1);
     }
     new_command->ptr_to_args[i] = strdup(args[i]);
@@ -142,8 +141,73 @@ char **isCommandValid(Command *cmd) {
   }
 }
 
-int main(void)
-{
+void saveCommandToHistory(char **args, int result_of_exec, int *command_counter, int *command_list_size, Command** prev_commands) {
+  Command *latest_cmd;
+  if (result_of_exec == 1) { //The command couldn't be executed successfully
+    latest_cmd = createHistoryCommand(*command_counter, args, 1);
+  } else {                   //Command executed successfully
+    latest_cmd = createHistoryCommand(*command_counter, args, 0);
+  }
+  
+  if (*command_counter + 1 > *command_list_size) {
+    (*command_list_size) *= 2;
+    realloc(prev_commands, *command_list_size * sizeof(Command));
+  }
+  prev_commands[*command_counter] = latest_cmd;
+  (*command_counter)++;
+}
+
+void notifyUserHistoryCommandFailed(int no_commands_exist, int no_commands_with_given_char_exist) {
+  if (no_commands_exist) {
+    printf("No previous commands have been recorded! \n");  
+    no_commands_exist = 0;
+  } 
+
+  if (no_commands_with_given_char_exist) {
+    printf("Previous command with that character doesn't exist! \n");  
+    no_commands_with_given_char_exist = 0;
+  }
+}
+
+void printCommand(char **args) {
+  printf("Executing the following command: ");
+  int j = 0;
+  while (args[j] != NULL) {
+    printf("%s ", args[j]);
+    j++;
+  }
+  printf("\n");
+}
+
+void executeChangeDirectoryCommand(char **args, char *old_path) {
+  // char *temp = "changed boy";
+
+  // if (strcmp(args[1], "..") == 0) {
+  //   if (chdir(old_path) == -1) printf(strerror(errno));
+  // } else {
+
+  // }
+
+  // memcpy(old_path, temp, strlen(temp));
+}
+
+void printWorkingDirectory() {
+  char *pwd = (char*) malloc(150*sizeof(char));
+  if (pwd == NULL) {
+    printf("memory allocation failed! \n");
+    exit(1);
+  }
+  getcwd(pwd, 300);
+  printf("%s\n", pwd);
+}
+
+int main(void) {
+
+  char *pth = "/";
+  char *old_path = (char*) malloc(300);
+  memcpy(old_path, pth, strlen(pth));
+  chdir(old_path);
+
   int no_commands_exist = 0;
   int no_commands_with_given_char_exist = 0;
   char inputBuffer[MAX_LINE]; /* buffer to hold the command entered */
@@ -151,11 +215,14 @@ int main(void)
   char *args[MAX_LINE/+1];    /* command line (of 80) has max of 40 arguments */
                               /* This is an array of pointers to chars */
 
-  int j = 0;
-  int command_counter = 0;
-  int command_list_size = 10;
+  int *command_counter;
+  int cmd_counter_temp = 0;
+  command_counter = &cmd_counter_temp;
+  int *command_list_size;
+  int cmd_list_size_temp = 10;
+  command_list_size = &cmd_list_size_temp;
   Command *temp_command;
-  Command **prev_commands = malloc(command_list_size * sizeof(Command));
+  Command **prev_commands = malloc(*command_list_size * sizeof(Command));
 
   while (1) {                 /* Program terminates normally inside setup */
     background = 0;
@@ -164,18 +231,24 @@ int main(void)
 
     char **temp_arr;
     if (strcmp(args[0], "history") == 0) {
-      executeHistoryCommand(prev_commands, command_counter);
+      executeHistoryCommand(prev_commands, *command_counter);
+      continue;
+    } else if (strcmp(args[0], "cd") == 0) {
+      executeChangeDirectoryCommand(args, old_path);
+    } else if (strcmp(args[0], "pwd") == 0) {
+      printWorkingDirectory();
+      saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
       continue;
     } else if (*args[0] == 'r') {
 
       if (!args[1]) {
         // user pressed r and did not pass any commands
-        temp_command = findMostRecentCommand(prev_commands, command_counter);
+        temp_command = findMostRecentCommand(prev_commands, *command_counter);
         temp_arr = isCommandValid(temp_command);
         no_commands_exist = 1;
       } else {
         // finding previous command that starts with the given character
-        temp_command = findCommandInHistory(*args[1], prev_commands, command_counter);
+        temp_command = findCommandInHistory(*args[1], prev_commands, *command_counter);
         temp_arr = isCommandValid(temp_command);
         no_commands_with_given_char_exist = 1;
       }
@@ -190,27 +263,14 @@ int main(void)
       // or if 'r' was pressed with no char and no commands have been
       // entered before
       if (temp_arr == NULL) {
-        if (no_commands_exist) {
-          printf("No previous commands have been recorded! \n");  
-          no_commands_exist = 0;
-        } 
-
-        if (no_commands_with_given_char_exist) {
-          printf("Previous command with that character doesn't exist! \n");  
-          no_commands_with_given_char_exist = 0;
-        }
+        notifyUserHistoryCommandFailed(no_commands_exist, no_commands_with_given_char_exist);
+        no_commands_exist = 0;
+        no_commands_with_given_char_exist = 0;
         continue;
       }
 
       memcpy(args, temp_arr, MAX_LINE);
-
-      printf("Executing the following command: ");
-      j = 0;
-      while (args[j] != NULL) {
-        printf("%s ", args[j]);
-        j++;
-      }
-      printf("\n");
+      printCommand(args);
 
     }
 
@@ -250,19 +310,7 @@ int main(void)
       }
     }
 
-    Command *latest_cmd;
-    if (result_of_exec == 1) { //The command couldn't be executed successfully
-      latest_cmd = createHistoryCommand(command_counter, args, 1);
-    } else {  //Command executed successfully
-      latest_cmd = createHistoryCommand(command_counter, args, 0);
-    }
-    
-    if (command_counter + 1 > command_list_size) {
-      command_list_size *= 2;
-      realloc(prev_commands, command_list_size * sizeof(Command));
-    }
-    prev_commands[command_counter] = latest_cmd;
-    command_counter++;
+    saveCommandToHistory(args, result_of_exec, command_counter, command_list_size, prev_commands);
 
   }
 }
