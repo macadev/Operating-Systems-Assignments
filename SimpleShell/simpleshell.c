@@ -4,7 +4,6 @@
 #include <errno.h>
 #include <string.h>
 #define MAX_LINE 80 /* 80 chars per line, per command, should be enough. */
-#define EXEC_FAILED -1
 
 
 typedef struct Command {
@@ -179,18 +178,49 @@ void printCommand(char **args) {
   printf("\n");
 }
 
+/*
+  Function to change directories
+  You can go up the directory tree by using cd ..
+  The prompt displays the current directory
+*/
 void executeChangeDirectoryCommand(char **args, char *old_path) {
-  // char *temp = "changed boy";
+  char *end_slash = "/";
+  char *temp_path = (char*) malloc(300);
 
-  // if (strcmp(args[1], "..") == 0) {
-  //   if (chdir(old_path) == -1) printf(strerror(errno));
-  // } else {
+  //Go up directory tree
+  if (strcmp(args[1], "..") == 0) {
+    
+    // Cannot go any further than the root directory
+    if (strcmp(old_path, "/") == 0) return;
+    
+    // Otherwise do the chdir call
+    int index = strlen(old_path) - 2;
+    while(old_path[index] != '/') index--;
+    memcpy(temp_path, &old_path[0], index + 1);
 
-  // }
+  } else {
+    
+    //Go down directory tree
+    int length;
+    if (args[1][strlen(args[1]) - 1] != '/') {
+      length = strlen(args[1]) + 1;
+      strcat(args[1], end_slash);
+    }
+    strcpy(temp_path, old_path);
+    strcat(temp_path, args[1]);
+  }
 
-  // memcpy(old_path, temp, strlen(temp));
+  //Execute change directory function
+  if (chdir(temp_path) != -1) {
+    strcpy(old_path, temp_path);
+  } else {
+    printf("%s\n", strerror(errno));
+  }
 }
 
+/*
+  Prints the current working directory
+*/
 void printWorkingDirectory() {
   char *pwd = (char*) malloc(150*sizeof(char));
   if (pwd == NULL) {
@@ -226,19 +256,28 @@ int main(void) {
 
   while (1) {                 /* Program terminates normally inside setup */
     background = 0;
-    printf(" COMMAND->\n");
+    //Print promp and current path
+    printf("COMMAND:%s->\n", old_path);
     setup(inputBuffer, args, &background); /* get next command */
 
     char **temp_arr;
     if (strcmp(args[0], "history") == 0) {
+      
       executeHistoryCommand(prev_commands, *command_counter);
       continue;
+
     } else if (strcmp(args[0], "cd") == 0) {
+      
+      saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
       executeChangeDirectoryCommand(args, old_path);
+      continue;
+
     } else if (strcmp(args[0], "pwd") == 0) {
+      
       printWorkingDirectory();
       saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
       continue;
+
     } else if (*args[0] == 'r') {
 
       if (!args[1]) {
@@ -251,6 +290,12 @@ int main(void) {
         temp_command = findCommandInHistory(*args[1], prev_commands, *command_counter);
         temp_arr = isCommandValid(temp_command);
         no_commands_with_given_char_exist = 1;
+      }
+
+      if (strcmp(args[1], "cd") == 0) {
+        saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
+        executeChangeDirectoryCommand(args, old_path);
+        continue;
       }
 
       //Check if the command is INVALID, if it is don't execute it.
@@ -271,6 +316,13 @@ int main(void) {
 
       memcpy(args, temp_arr, MAX_LINE);
       printCommand(args);
+
+      // Handle case where the user invokes 'r' on the change directory command
+      if (strcmp(args[0], "cd") == 0) {
+        saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
+        executeChangeDirectoryCommand(args, old_path);
+        continue;
+      }
 
     }
 
