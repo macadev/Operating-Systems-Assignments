@@ -3,9 +3,14 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/types.h>
+#include <signal.h>
 #define MAX_LINE 80 /* 80 chars per line, per command, should be enough. */
 
-
+/*
+  Structure used to hold the information necessary
+  to restore a command using the history feature.
+*/
 typedef struct Command {
   int id;
   char *ptr_to_args[MAX_LINE/+1];
@@ -14,9 +19,9 @@ typedef struct Command {
 } Command;
 
 /**
-* setup() reads in the next command line, separating it into distinct tokens
-* using whitespace as delimiters. setup() sets the args parameter as a
-* null-terminated string.
+  setup() reads in the next command line, separating it into distinct tokens
+  using whitespace as delimiters. setup() sets the args parameter as a
+  null-terminated string.
 */
 void setup(char inputBuffer[], char *args[], int *background) {
   int length, /* # of characters in the command line */
@@ -71,6 +76,10 @@ void setup(char inputBuffer[], char *args[], int *background) {
   args[ct] = NULL; /* just in case the input line was > 80 */
 }
 
+/* 
+  Creates a Command object with the information necessary
+  to replicate it using the history feature.
+*/
 Command *createHistoryCommand(int command_counter, char **args, int is_command_valid) {
   Command *new_command = malloc(sizeof(Command));
   new_command->id = command_counter;
@@ -91,14 +100,18 @@ Command *createHistoryCommand(int command_counter, char **args, int is_command_v
   return new_command;
 }
 
-Command *findCommandInHistory(char first_char_of_cmd, Command** prev_commands, int command_counter) {
+/*
+  Returns the first command to math the character specified by the user.
+  Note that it will only check the 10 most recent commands.
+*/
+Command *findCommandInHistory(char firstCharInCommand, Command** prev_commands, int command_counter) {
   int i = command_counter;
   while (i >= 0) {
     if (prev_commands[i] == NULL) {
       i--;
       continue;
     }
-    if (prev_commands[i]->first_chr == first_char_of_cmd) {
+    if (prev_commands[i]->first_chr == firstCharInCommand) {
       return prev_commands[i];
     }
     i--;
@@ -106,6 +119,9 @@ Command *findCommandInHistory(char first_char_of_cmd, Command** prev_commands, i
   return NULL;
 }
 
+/*
+  Returns the most recent command executed by the user.
+*/
 Command *findMostRecentCommand(Command** prev_commands, int command_counter) {
   int i = command_counter;
   while (i >= 0) {
@@ -119,6 +135,9 @@ Command *findMostRecentCommand(Command** prev_commands, int command_counter) {
   return NULL;
 }
 
+/*
+  Display the list of all the commands that the user has used.
+*/
 void executeHistoryCommand(Command** prev_commands, int command_counter) {
   int j = 0;
   for (int i = 0; i <= command_counter - 1; i++) {
@@ -132,6 +151,9 @@ void executeHistoryCommand(Command** prev_commands, int command_counter) {
   }
 }
 
+/*
+  Check if the command object is valid, i.e not null
+*/
 char **isCommandValid(Command *cmd) {
   if (cmd == NULL) {
     return NULL;          
@@ -140,7 +162,12 @@ char **isCommandValid(Command *cmd) {
   }
 }
 
-void saveCommandToHistory(char **args, int result_of_exec, int *command_counter, int *command_list_size, Command** prev_commands) {
+/*
+  Creates and stores a Command struct based on the input from the user.
+  It also stores an integer used to determine if the execution of the 
+  command was successful or not. 
+*/
+Command** saveCommandToHistory(char **args, int result_of_exec, int *command_counter, int *command_list_size, Command** prev_commands) {
   Command *latest_cmd;
   if (result_of_exec == 1) { //The command couldn't be executed successfully
     latest_cmd = createHistoryCommand(*command_counter, args, 1);
@@ -149,13 +176,23 @@ void saveCommandToHistory(char **args, int result_of_exec, int *command_counter,
   }
   
   if (*command_counter + 1 > *command_list_size) {
+    printf("%d\n", *command_list_size);
     (*command_list_size) *= 2;
-    realloc(prev_commands, *command_list_size * sizeof(Command));
+    printf("%d\n", *command_list_size);
+
+    Command** new_command_storage = malloc(*command_list_size * sizeof(Command));
+    memcpy(new_command_storage, prev_commands, *command_list_size * sizeof(Command));
+    prev_commands = new_command_storage;
   }
   prev_commands[*command_counter] = latest_cmd;
   (*command_counter)++;
+  return prev_commands;
 }
 
+/*
+  Notifies the user that either there are no previous commands to show,
+  or that no command exists with the specified character.
+*/
 void notifyUserHistoryCommandFailed(int no_commands_exist, int no_commands_with_given_char_exist) {
   if (no_commands_exist) {
     printf("No previous commands have been recorded! \n");  
@@ -168,6 +205,10 @@ void notifyUserHistoryCommandFailed(int no_commands_exist, int no_commands_with_
   }
 }
 
+/*
+  Prints the arguments of the command. Used to notify
+  the user of the command being ran when using the history feature.
+*/
 void printCommand(char **args) {
   printf("Executing the following command: ");
   int j = 0;
@@ -179,9 +220,9 @@ void printCommand(char **args) {
 }
 
 /*
-  Function to change directories
+  Function to change directories.
   You can go up the directory tree by using cd ..
-  The prompt displays the current directory
+  The command prompt displays the current directory.
 */
 void executeChangeDirectoryCommand(char **args, char *old_path) {
   char *end_slash = "/";
@@ -219,7 +260,8 @@ void executeChangeDirectoryCommand(char **args, char *old_path) {
 }
 
 /*
-  Prints the current working directory
+  Prints the current working directory. Upon starting the shell
+  the default directory is the root.
 */
 void printWorkingDirectory() {
   char *pwd = (char*) malloc(150*sizeof(char));
@@ -231,20 +273,88 @@ void printWorkingDirectory() {
   printf("%s\n", pwd);
 }
 
+/*
+  Stores the pid of a background process so that it can be displayed when
+  the 'jobs' command is activated
+*/
+void saveProcessID(int pid, int *activeJobs, int *jobIndex) {
+  activeJobs[*jobIndex] = pid;
+  (*jobIndex)++;
+}
+
+/*
+  Print the jobs that have been launched with '&' at the end.
+*/
+void printJobs(int *activeJobs, int *jobIndex) {
+  if (*jobIndex == 0) {
+    printf("There are no background processes running.\n");
+    return;
+  }
+
+  int status;
+  printf("SELECTOR | PID | STATUS \n");
+  for (int i = 0; i <= *jobIndex; i++) {
+    if (activeJobs[i] != NULL) {
+      if (waitpid(activeJobs[i], &status, WNOHANG) == 0) {
+        // Process is still alive  
+        printf("[%d] %d RUNNING\n", i, activeJobs[i]);
+      } else {
+        // Process is dead
+        printf("[%d] %d TERMINATED\n", i, activeJobs[i]);
+      }
+    }
+  }
+}
+
+/*
+  Used to bring a process to the foreground. Activated by using
+  the 'fg' command and specifying a process selector from the 
+  jobs table.
+*/
+void bringProcessToForeground(int *activeJobs, int *jobIndex, int processSelector) {
+  int status;
+  if (processSelector > *jobIndex) {
+    printf("No process with the specified selector exists.\n");
+    return;
+  }
+  int endID = waitpid(activeJobs[processSelector], &status, WUNTRACED);
+}
+
+/*
+  Executes the main loop of the shell.
+*/
 int main(void) {
 
+  // Variables related to the current directory path
   char *pth = "/";
   char *old_path = (char*) malloc(300);
+
+  if (old_path == NULL) {
+    printf("memory allocation failed! \n");
+    exit(1);
+  }
+
   memcpy(old_path, pth, strlen(pth));
   chdir(old_path);
 
+  // Variables related to jobs processing
+  int *activeJobs = (int*) malloc(300 * sizeof(int));
+  if (activeJobs == NULL) {
+    printf("memory allocation failed! \n");
+    exit(1);
+  }
+  int temp_index = 0;
+  int *jobIndex = &temp_index;
+
+  // Variables related to input processing
+  char inputBuffer[MAX_LINE];       /* buffer to hold the command entered */
+  int background;                   /* equals 1 if a command is followed by '&' */
+  char *args[MAX_LINE/+1];          /* command line (of 80) has max of 40 arguments */
+                                    /* This is an array of pointers to chars */
+
+  // Variables used to control the history command
   int no_commands_exist = 0;
   int no_commands_with_given_char_exist = 0;
-  char inputBuffer[MAX_LINE]; /* buffer to hold the command entered */
-  int background;             /* equals 1 if a command is followed by '&' */
-  char *args[MAX_LINE/+1];    /* command line (of 80) has max of 40 arguments */
-                              /* This is an array of pointers to chars */
-
   int *command_counter;
   int cmd_counter_temp = 0;
   command_counter = &cmd_counter_temp;
@@ -253,6 +363,10 @@ int main(void) {
   command_list_size = &cmd_list_size_temp;
   Command *temp_command;
   Command **prev_commands = malloc(*command_list_size * sizeof(Command));
+  if (prev_commands == NULL) {
+    printf("memory allocation failed! \n");
+    exit(1);
+  }
 
   while (1) {                 /* Program terminates normally inside setup */
     background = 0;
@@ -261,21 +375,39 @@ int main(void) {
     setup(inputBuffer, args, &background); /* get next command */
 
     char **temp_arr;
-    if (strcmp(args[0], "history") == 0) {
+    if (strcmp(args[0], "exit") == 0) {
+      exit(0);
+    } else if (strcmp(args[0], "history") == 0) {
       
       executeHistoryCommand(prev_commands, *command_counter);
       continue;
 
     } else if (strcmp(args[0], "cd") == 0) {
       
-      saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
+      prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
       executeChangeDirectoryCommand(args, old_path);
       continue;
 
     } else if (strcmp(args[0], "pwd") == 0) {
       
       printWorkingDirectory();
-      saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
+      prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
+      continue;
+
+    } else if (strcmp(args[0], "jobs") == 0) {
+
+      printJobs(activeJobs, jobIndex);
+      prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
+      continue;
+
+    } else if (strcmp(args[0], "fg") == 0) {
+      if (args[1] == NULL) {
+        printf("You need to specify a process selector to bring it to the foreground.\n");
+        prev_commands = saveCommandToHistory(args, 1, command_counter, command_list_size, prev_commands);
+        continue;
+      }
+      bringProcessToForeground(activeJobs, jobIndex, atoi(args[1]));
+      prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
       continue;
 
     } else if (*args[0] == 'r') {
@@ -293,7 +425,7 @@ int main(void) {
       }
 
       if (strcmp(args[1], "cd") == 0) {
-        saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
+        prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
         executeChangeDirectoryCommand(args, old_path);
         continue;
       }
@@ -319,7 +451,7 @@ int main(void) {
 
       // Handle case where the user invokes 'r' on the change directory command
       if (strcmp(args[0], "cd") == 0) {
-        saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
+        prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
         executeChangeDirectoryCommand(args, old_path);
         continue;
       }
@@ -349,10 +481,6 @@ int main(void) {
     } else if (background != 1) {
       endID = waitpid(childID, &status, WUNTRACED);
 
-      while (endID != childID) {
-        endID = waitpid(childID, &status, WUNTRACED);
-      }
-
       if (endID == -1) exit(EXIT_FAILURE);
 
       if (WIFEXITED(status)) {
@@ -360,9 +488,11 @@ int main(void) {
           result_of_exec = 1;
         } 
       }
+    } else {
+      saveProcessID(childID, activeJobs, jobIndex);
     }
 
-    saveCommandToHistory(args, result_of_exec, command_counter, command_list_size, prev_commands);
+    prev_commands = saveCommandToHistory(args, result_of_exec, command_counter, command_list_size, prev_commands);
 
   }
 }
