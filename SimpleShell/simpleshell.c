@@ -176,9 +176,7 @@ Command** saveCommandToHistory(char **args, int result_of_exec, int *command_cou
   }
   
   if (*command_counter + 1 > *command_list_size) {
-    printf("%d\n", *command_list_size);
     (*command_list_size) *= 2;
-    printf("%d\n", *command_list_size);
 
     Command** new_command_storage = malloc(*command_list_size * sizeof(Command));
     memcpy(new_command_storage, prev_commands, *command_list_size * sizeof(Command));
@@ -224,38 +222,40 @@ void printCommand(char **args) {
   You can go up the directory tree by using cd ..
   The command prompt displays the current directory.
 */
-void executeChangeDirectoryCommand(char **args, char *old_path) {
-  char *end_slash = "/";
-  char *temp_path = (char*) malloc(300);
+void executeChangeDirectoryCommand(char **args) {
+  char *space = " "; 
 
-  //Go up directory tree
-  if (strcmp(args[1], "..") == 0) {
+  /*
+    Path name has spaces, note that the input should not have
+    backslashes, to access a directory that has a space in its name
+    write out its name without escaping the spaces. This is due to
+    the behavior of the setup function.
+  */
+  if (args[2] != NULL) {
+    char *concatenatedPath = (char*) malloc(300);
     
-    // Cannot go any further than the root directory
-    if (strcmp(old_path, "/") == 0) return;
-    
-    // Otherwise do the chdir call
-    int index = strlen(old_path) - 2;
-    while(old_path[index] != '/') index--;
-    memcpy(temp_path, &old_path[0], index + 1);
-
-  } else {
-    
-    //Go down directory tree
-    int length;
-    if (args[1][strlen(args[1]) - 1] != '/') {
-      length = strlen(args[1]) + 1;
-      strcat(args[1], end_slash);
+    int j = 1;
+    //Concatenate each word contained in the Path
+    while (args[j] != NULL) {
+      strcat(concatenatedPath, args[j]);
+      if (args[j+1] != NULL) {
+        strcat(concatenatedPath, space);
+      }
+      j++;
     }
-    strcpy(temp_path, old_path);
-    strcat(temp_path, args[1]);
-  }
 
-  //Execute change directory function
-  if (chdir(temp_path) != -1) {
-    strcpy(old_path, temp_path);
+    // Navifate to the path
+    if (chdir(concatenatedPath) == -1) {
+      printf("%s\n", strerror(errno));
+    }
+    free(concatenatedPath);
+
   } else {
-    printf("%s\n", strerror(errno));
+
+    // Path doesn't have any spaces in its name
+    if (chdir(args[1]) == -1) {
+      printf("%s\n", strerror(errno));
+    }
   }
 }
 
@@ -271,6 +271,20 @@ void printWorkingDirectory() {
   }
   getcwd(pwd, 300);
   printf("%s\n", pwd);
+  free(pwd);
+}
+
+/*
+  Returns the path to the current working directory
+*/
+char *getWorkingDirectory() {
+  char *pwd = (char*) malloc(150*sizeof(char));
+  if (pwd == NULL) {
+    printf("memory allocation failed! \n");
+    exit(1);
+  }
+  getcwd(pwd, 300);
+  return pwd;
 }
 
 /*
@@ -280,6 +294,7 @@ void printWorkingDirectory() {
 void saveProcessID(int pid, int *activeJobs, int *jobIndex) {
   activeJobs[*jobIndex] = pid;
   (*jobIndex)++;
+  printf("%d\n", *jobIndex);
 }
 
 /*
@@ -294,14 +309,12 @@ void printJobs(int *activeJobs, int *jobIndex) {
   int status;
   printf("SELECTOR | PID | STATUS \n");
   for (int i = 0; i <= *jobIndex; i++) {
-    if (activeJobs[i] != NULL) {
-      if (waitpid(activeJobs[i], &status, WNOHANG) == 0) {
-        // Process is still alive  
-        printf("[%d] %d RUNNING\n", i, activeJobs[i]);
-      } else {
-        // Process is dead
-        printf("[%d] %d TERMINATED\n", i, activeJobs[i]);
-      }
+    if (waitpid(activeJobs[i], &status, WNOHANG) == 0) {
+      // Process is still alive  
+      printf("[%d] %d RUNNING\n", i, activeJobs[i]);
+    } else {
+      // Process is dead
+      printf("[%d] %d TERMINATED\n", i, activeJobs[i]);
     }
   }
 }
@@ -317,7 +330,7 @@ void bringProcessToForeground(int *activeJobs, int *jobIndex, int processSelecto
     printf("No process with the specified selector exists.\n");
     return;
   }
-  int endID = waitpid(activeJobs[processSelector], &status, WUNTRACED);
+  waitpid(activeJobs[processSelector], &status, WUNTRACED);
 }
 
 /*
@@ -327,15 +340,7 @@ int main(void) {
 
   // Variables related to the current directory path
   char *pth = "/";
-  char *old_path = (char*) malloc(300);
-
-  if (old_path == NULL) {
-    printf("memory allocation failed! \n");
-    exit(1);
-  }
-
-  memcpy(old_path, pth, strlen(pth));
-  chdir(old_path);
+  chdir(pth);
 
   // Variables related to jobs processing
   int *activeJobs = (int*) malloc(300 * sizeof(int));
@@ -370,37 +375,53 @@ int main(void) {
 
   while (1) {                 /* Program terminates normally inside setup */
     background = 0;
-    //Print promp and current path
-    printf("COMMAND:%s->\n", old_path);
+
+    // Print promp and current path
+    printf("COMMAND:%s->\n", getWorkingDirectory());
     setup(inputBuffer, args, &background); /* get next command */
+    // If there is no input, display prompt again.
+    if (args[0] == NULL) continue;
 
     char **temp_arr;
     if (strcmp(args[0], "exit") == 0) {
+      // free the allocated memory before exiting
+      free(activeJobs);
+      for (int i = 0; i < *command_list_size; i++) {
+        free(prev_commands[i]);
+      }
+      free(prev_commands);
       exit(0);
     } else if (strcmp(args[0], "history") == 0) {
       
+      // display the command history
       executeHistoryCommand(prev_commands, *command_counter);
       continue;
 
     } else if (strcmp(args[0], "cd") == 0) {
       
+      // change directory to the specified directory
       prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
-      executeChangeDirectoryCommand(args, old_path);
+      executeChangeDirectoryCommand(args);
       continue;
 
     } else if (strcmp(args[0], "pwd") == 0) {
       
+      // Print the current working directory
       printWorkingDirectory();
       prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
       continue;
 
     } else if (strcmp(args[0], "jobs") == 0) {
 
+      // Display the active and terminated jobs
       printJobs(activeJobs, jobIndex);
       prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
       continue;
 
     } else if (strcmp(args[0], "fg") == 0) {
+      
+      // Bring a job to the foregroung. Note that a selector id must be specified. E.g 'fg 2'
+      // The selectors are shown in the jobs table
       if (args[1] == NULL) {
         printf("You need to specify a process selector to bring it to the foreground.\n");
         prev_commands = saveCommandToHistory(args, 1, command_counter, command_list_size, prev_commands);
@@ -412,8 +433,10 @@ int main(void) {
 
     } else if (*args[0] == 'r') {
 
+      // Execute a command from the 10 most recent commands.
       if (!args[1]) {
         // user pressed r and did not pass any commands
+        // load the most recent command from the history
         temp_command = findMostRecentCommand(prev_commands, *command_counter);
         temp_arr = isCommandValid(temp_command);
         no_commands_exist = 1;
@@ -424,19 +447,13 @@ int main(void) {
         no_commands_with_given_char_exist = 1;
       }
 
-      if (strcmp(args[1], "cd") == 0) {
-        prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
-        executeChangeDirectoryCommand(args, old_path);
-        continue;
-      }
-
-      //Check if the command is INVALID, if it is don't execute it.
+      //Check if the command is INVALID, in which case it is not executed.
       if (temp_command != NULL && temp_command->is_command_valid == 1){
         printf("The command you are trying to run is erroneous.\n");
         continue;
       }
 
-      // notify user if the command with the character doesn't exist
+      // Notify user if the command with the character doesn't exist
       // or if 'r' was pressed with no char and no commands have been
       // entered before
       if (temp_arr == NULL) {
@@ -452,25 +469,33 @@ int main(void) {
       // Handle case where the user invokes 'r' on the change directory command
       if (strcmp(args[0], "cd") == 0) {
         prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
-        executeChangeDirectoryCommand(args, old_path);
+        executeChangeDirectoryCommand(args);
         continue;
       }
 
-    }
+      // Display the active and terminated jobs
+      if (strcmp(args[0], "jobs") == 0) {
+        printJobs(activeJobs, jobIndex);
+        prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
+        continue;
+      }
 
-    /* the steps are:
-    (1) fork a child process using fork()
-    (2) the child process will invoke execvp()
-    (3) if background == 1, the parent will wait,
-    otherwise returns to the setup() function. */
+      // Run the pwd command
+      if (strcmp(args[0], "pwd") == 0) {
+        printWorkingDirectory();
+        prev_commands = saveCommandToHistory(args, 0, command_counter, command_list_size, prev_commands);
+        continue;
+      }
+    }
     
+    
+    /* Section dedicated to process creation and execution */
     int status;
     int result_of_exec = 0;
     pid_t childID, endID;
     childID = fork();
 
     if (childID == 0) {
-      
       result_of_exec = execvp(args[0], args);
       if (result_of_exec == -1) {
         exit(EXIT_FAILURE);
@@ -479,6 +504,8 @@ int main(void) {
       }
 
     } else if (background != 1) {
+      // If background flag is not equal to 1, then
+      // the parent process will wait for the child to terminate.
       endID = waitpid(childID, &status, WUNTRACED);
 
       if (endID == -1) exit(EXIT_FAILURE);
@@ -489,10 +516,12 @@ int main(void) {
         } 
       }
     } else {
+      // If parent doesn't wait, then the child's process ID
+      // stored so that it can be displayed on the jobs table.
       saveProcessID(childID, activeJobs, jobIndex);
     }
 
+    //The command given by the user is saved to the history.
     prev_commands = saveCommandToHistory(args, result_of_exec, command_counter, command_list_size, prev_commands);
-
   }
 }
